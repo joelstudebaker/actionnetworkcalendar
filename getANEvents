@@ -1,3 +1,7 @@
+// TO INSTALL, create a new project on script.google.com. After saving, go to My Projects and select "Triggers" from the project's contextual menu.
+// Recommended schedule for trigger is every 5 minutes. You should not experience any rate limits.
+// Please share question, improvements, recommendations: joel@joelstudebaker.com
+
 // REQUIRED USER DEFINED VARIABLES
 // dst() -> dstoffset, standardoffset
 // getANEvents -> OSDI-API-Token, google_calendar_id
