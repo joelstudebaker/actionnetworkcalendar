@@ -1,0 +1,250 @@
+// REQUIRED USER DEFINED VARIABLES
+// dst() -> dstoffset, standardoffset
+// getANEvents -> OSDI-API-Token, google_calendar_id
+
+// CUSTOMIZABLE VARIABLES 
+// addTwoHours() -> Change the 2 on var add to change standard duration of events with no end time.
+// getANEvents() -> Change location2 and description to customize appearance of Google Calendar events
+// Full list of customizations on Google Calendar Event available here -> https://developers.google.com/apps-script/reference/calendar/calendar-event
+
+/* getANEvents()
+**Retrieves all events modified on current day from Action Network, then creates, modifies, and deletes events on Google Calendar based on response
+*/
+
+function getANEvents() {
+ 
+  // Sets headers for initial API Call
+    var fetchParameters = {
+    headers: {
+      'Content-Type' : 'application/json',
+      'OSDI-API-Token' : 'your api token' //OSDI-API-Token is obtained from Action Network API & Sync
+    }
+  };
+  
+  // Google Calendar ID -- Replace with your Calendar ID, found in "Settings and Sharing". Use FULL ID, including the @domain.com
+  var google_calendar_id = 'your google calendar id';
+  
+  // gets current date in correct format to filter API call
+  var filter_date = Utilities.formatDate(new Date(),"UTC","yyyy-MM-dd");
+  console.log(filter_date);
+
+  // retrieves first page of events modified today
+  var apiUrl = "https://actionnetwork.org/api/v2/events?filter=modified_date gt '" + filter_date + "'";
+  var response = UrlFetchApp.fetch(apiUrl, fetchParameters);
+  var content = JSON.parse(response.getContentText());
+  var events = content["_embedded"]["osdi:events"];
+  
+  // Retrieves variables from content headers
+  var total_pages = content.total_pages;
+  var per_page = content.per_page;
+  var total_records = content.total_records; 
+  var page = content.page;
+  var next = content._links.next.href;
+  
+  // Rest of code will only run if there is at least one record
+  if (total_records > 0) {
+    
+    // Iterates through pages of records using _links provided in response
+    for (p = 1;  p <= total_pages; p++) {
+      
+      // Retrieves new event set for all but the first page (we already retrieved that!)
+      if(p > 1) {
+        apiUrl = next;
+        response = UrlFetchApp.fetch(apiUrl, fetchParameters);
+        content = JSON.parse(response.getContentText());
+        events = content["_embedded"]["osdi:events"];
+        next = content._links.next.href;}
+      
+      // Determines number of records on page to iterate through
+      var tally = 0;
+      if(total_pages === 1) {tally = total_records;}
+      else if (total_pages > p) {tally = 25;}
+      else if (total_pages === p) {tally = total_records - 25*(p-1);}
+      
+      // Iterates through events on current page
+      for (i = 0; i < tally; i++) {
+        
+        // Defines event
+        var event = events[i];
+        
+        // Examines identifiers and returns actionnetwork event id
+        var identifiers = event.identifiers;
+        var RegEx = new RegExp(/action_network:[^,]*/);
+        var String = RegEx.exec(identifiers)[0];
+        var action_network_id = String.substring(15).trim();
+        
+        // Examines identifiers for google_calendar id. This only exists if the event has already been processed by this script!
+        var google_id = 'bunk';
+        try{
+          var RegEx2 = new RegExp(/google_id:[^,]*/);
+          var String2 = RegEx2.exec(identifiers)[0];
+          google_id = String2.substring(10).trim();} catch(e) {}
+        
+        
+        // Retrieves other variables from event
+        var created_date = event.created_date;
+        var description = event.description;
+        var start_date = event.start_date;
+        var total_accepts = event.total_accepted;
+        var modified_date = event.modified_date;
+        var status = event.status;
+        var transparence = event.transparence;
+        var visibility = event.visibility;
+        var guests_can_invite_others = event.guests_can_invite_others;
+        var capacity = event.capacity;
+        var origin_system = event.origin_system;
+        var title = event.title;
+        var administrative_title = event.name;
+        var url = event.browser_url;
+        var instructions = event.instructions;
+        
+        // start of location string assembler
+        var location = event.location;
+        var location2 = '';
+        
+        //TRY: Assembles location for calendar event IF venue, address, city, state, and zip are all available. 
+        //CATCH: Otherwise adds event url to location field on Google Cal.
+        try {
+          var venue = location.venue;
+          var address = location.address_lines.join();
+          var city = location.locality;
+          var state = location.region;
+          var zip = location.postal_code;
+          location2 = venue + ', ' + address + ', ' + city + ', ' + state + ' ' + zip;}
+        
+        catch(e) { 
+          location2 = url;}
+        
+        // retrieves correct timezone offset and sets start time accordingly
+        var start_date_utc = new Date(start_date).toUTCString();
+        var offset = dst(new Date(start_date));
+        var start = new Date(start_date_utc + ' ' + offset);
+        
+        // TRY: retrieves end time from getEnd script using event url
+        // CATCH: adds two hours to start time if no end time is present
+        try {var end = getEnd(url);} catch(e) {var end = addTwoHours(start);}
+        var end_date = new Date(end);
+        
+        // Sets HTML for Description field on Google Calendar by combining variables from Action Network event
+        var description = "<p><b>More Info and RSVP:</b></p><p>" + url + "</p><p><b>Description:<b></p><p>" + description + "</p>";
+        
+        // Following if statements will determine how to handle an event
+        // IF STATUS === CANCELLED -> Google Calendar Event will be deleted
+        // IF GOOGLE_ID === BUNK -> Google Calendar Event will be created
+        // ELSE -> Google Calendar Event will be edited
+        
+        if (status === 'cancelled') {
+          try { CalendarApp.getEventById(google_id).deleteEvent();} catch(e) {}}
+        
+        // If Action Network Event identifiers do not include a google_id, this event has not been previously processed by this script.
+        // In this case, a new event is created and a google_id identifier is added to the Action Network Event.   
+        else if (google_id === 'bunk') {
+          
+          // creates google calendar event then tags it with the actionnetwork event id
+          var calEvent = CalendarApp.getCalendarById(google_calendar_id).createEvent(title, start, end_date,{description: description, location: location2}).setTag("action_network_id",action_network_id);
+          
+          // retrieves the id for the google calendar event that was just created
+          var calEventId = calEvent.getId();
+          
+          // creates payload for PUT request to Action Network, adding google_id as an identifier on the event 
+          var identifiers2 = ["google_id:" + calEventId];
+          var formData = {
+            'identifiers' : identifiers2
+          };
+          var payload = JSON.stringify(formData);
+          
+          // sets options and sends request to Action Network, logs response
+          var options = {
+            "method": "put",
+            "headers": headers,
+            "payload": payload,
+            "muteHttpExceptions" : true,
+          };
+          var an_url = "https://actionnetwork.org/api/v2/events/" + action_network_id;      
+          var request = UrlFetchApp.getRequest(an_url, options);
+          var response = UrlFetchApp.fetch(an_url,options);
+          console.log(response);
+        } 
+        
+        // If event was not cancelled and had a google_id, it is assumed the event should be modified.
+        // Retrieves event by google_id and adjusts event content
+        else {
+          CalendarApp.getCalendarById(google_calendar_id).getEventById(google_id).setTitle(title).setDescription(description).setTime(start,end_date);}
+   }
+  }
+ }
+}
+
+/* getEnd()
+**Opens the event link and retrieves end time from HTML because the Action Network API does not include the end time for whatever reason
+*/
+
+function getEnd(url) {
+  
+  //fetch site content
+  var websiteContent = UrlFetchApp.fetch(url).getContentText();
+  
+  //retrieve String including end date and time
+  var RegEx = new RegExp(/End:[\s\S]*?h4>/i);
+  var String = RegEx.exec(websiteContent)[0];
+  
+  //retrieve end date from string
+  var Trim1 = String.split('</span>')[1];
+  var Trim1l = Trim1.match(/,/).index + 1;
+  var Trim1r = Trim1.match(/</).index;
+  var eventdate = Trim1.substring(Trim1l,Trim1r).trim();
+  
+  //retrieve end time from string  
+  var Trim2 = String.split('</span>')[2];
+  var Trim2r = Trim2.match(/</).index;
+  var eventtime = Trim2.substring(1,Trim2r).trim();
+  
+  //combine date and time into a single string that Google Calendar can read, with Time Zone!
+  
+  var enddatetime = new Date(eventdate + ' ' + eventtime);
+  
+  //timezone magic, see https://stackoverflow.com/a/11888430
+
+  var offset = dst(enddatetime);
+  var end = eventdate + ' ' + eventtime + ' ' + offset;
+  return end;
+}
+
+/* dst()
+**Determines appropriate time zone offset based on current day 
+*/
+
+function dst(datevar) {
+   
+  //set offsets for timezonne during daylight savings time and standard time. Reference 24timezones.com.
+  var dstoffset = 'GMT-05:00'; // YOUR OFFSET DURING DST
+  var standardoffset = 'GMT-06:00'; // YOUR STANDARD OFFSET
+
+Date.prototype.stdTimezoneOffset = function () {
+    var jan = new Date(this.getFullYear(), 0, 1);
+    var jul = new Date(this.getFullYear(), 6, 1);
+    return Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+}
+
+Date.prototype.isDstObserved = function () {
+    return this.getTimezoneOffset() < this.stdTimezoneOffset();
+}
+
+if (datevar.isDstObserved()) { 
+   return dstoffset;
+} else {
+  return standardoffset;
+}
+}
+
+/* addTwoHours()
+**Adds two hours to given time. Used to create end time when no end time is provided for an event.
+*/
+
+function addTwoHours(startTime) {
+
+  var nowInMS = startTime.getTime(); // 1562300592245
+  var add = 2 * 60 * 60 * 1000; // 43200000 = 2 hours in milliseconds
+  var twoHoursLater = nowInMS + add; // 1562343792245
+  var futureDate = new Date(twoHoursLater); // Fri Jul 05 21:53:12 GMT+05:30 2019
+  return futureDate}
