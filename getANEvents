@@ -17,11 +17,11 @@
 
 function getANEvents() {
  
-  // Sets headers for initial API Call
+  // Sets headers for initial API Call -- OSDI-API-Token is obtained from Action Network API & Sync
     var fetchParameters = {
     headers: {
       'Content-Type' : 'application/json',
-      'OSDI-API-Token' : 'your api token' //OSDI-API-Token is obtained from Action Network API & Sync
+      'OSDI-API-Token' : 'your api token'
     }
   };
   
@@ -30,7 +30,6 @@ function getANEvents() {
   
   // gets current date in correct format to filter API call
   var filter_date = Utilities.formatDate(new Date(),"UTC","yyyy-MM-dd");
-  console.log(filter_date);
 
   // retrieves first page of events modified today
   var apiUrl = "https://actionnetwork.org/api/v2/events?filter=modified_date gt '" + filter_date + "'";
